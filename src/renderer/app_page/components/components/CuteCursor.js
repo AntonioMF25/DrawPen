@@ -1,11 +1,6 @@
-import "./CuteCursor.scss";
-
 import React from "react";
-
-import {
-  colorList,
-  widthList,
-} from "../constants.js"
+import "./CuteCursor.scss";
+import { colorList, widthList } from "../constants.js"
 
 const CuteCursor = ({
   mouseCoordinates,
@@ -47,25 +42,29 @@ const CuteCursor = ({
 
     switch (toolName) {
       case "eraser":
-        return <Icons.FaEraser {...monochromeIconProps} />
+        return <Icons.Eraser {...monochromeIconProps} />
       case "laser":
-        return <Icons.GiLaserburn {...monochromeIconProps} />
+        return <Icons.Laser {...monochromeIconProps} />
       case "pen":
-        return <Icons.FaPaintBrush {...iconProps} />
+        return <Icons.Brush {...iconProps} />
+      case "fadepen":
+        return <Icons.MagicBrush {...iconProps} />
       case "arrow":
-        return <Icons.FaArrowRight {...iconProps} />
+        return <Icons.Arrow {...iconProps} />
+      case "flat_arrow":
+        return <Icons.FlatArrow {...iconProps} />
       case "rectangle":
-        return <Icons.FaRegSquare {...iconProps} />;
+        return <Icons.Rectangle {...iconProps} />;
       case "oval":
-        return <Icons.FaRegCircle {...iconProps} />;
+        return <Icons.Oval {...iconProps} />;
       case "line":
-        return <Icons.AiOutlineLine {...iconProps} />;
+        return <Icons.Line {...iconProps} />;
       case "text":
-        return <Icons.FaFont {...iconProps} />;
+        return <Icons.Text {...iconProps} />;
       case "highlighter":
-        return <Icons.FaHighlighter {...iconProps} />
+        return <Icons.Highlighter {...iconProps} />
       default:
-        null
+        return null
     }
   };
 

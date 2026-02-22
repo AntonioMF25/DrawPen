@@ -1,7 +1,11 @@
-import { app, Tray, Menu, BrowserWindow, screen, globalShortcut, shell, ipcMain, nativeTheme } from 'electron';
+import { app, Tray, Menu, BrowserWindow, screen, globalShortcut, shell, ipcMain, nativeTheme, systemPreferences, desktopCapturer } from 'electron';
 import { updateElectronApp } from 'update-electron-app';
 import Store from 'electron-store';
+import { randomUUID } from 'crypto';
+import { PostHog } from 'posthog-node'
+import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import electronSquirrelStartup from 'electron-squirrel-startup';
 
 if (electronSquirrelStartup) {
@@ -18,6 +22,7 @@ const KEY_SHOW_HIDE_TOOLBAR    = 'CmdOrCtrl+T'
 const KEY_SHOW_HIDE_WHITEBOARD = 'CmdOrCtrl+E'
 const KEY_CLEAR_DESK           = 'CmdOrCtrl+K'
 const KEY_SETTINGS             = 'CmdOrCtrl+,'
+const KEY_MAKE_SCREENSHOT      = 'CmdOrCtrl+Shift+P'
 const KEY_Q                    = 'CmdOrCtrl+Q'
 const KEY_NULL                 = '[NULL]'
 
@@ -25,6 +30,10 @@ let lastShortcutTime = 0;
 const throttleDelay = 250;
 
 const schema = {
+  user_id: {
+    type: 'string',
+    default: randomUUID()
+  },
   show_whiteboard: {
     type: 'boolean',
     default: false
@@ -53,6 +62,10 @@ const schema = {
     type: 'number',
     default: 1
   },
+  tool_bar_default_brush: {
+    type: 'string',
+    default: 'pen'
+  },
   tool_bar_default_figure: {
     type: 'string',
     default: 'arrow'
@@ -61,6 +74,10 @@ const schema = {
     type: 'number',
   },
   show_drawing_border: {
+    type: 'boolean',
+    default: true
+  },
+  show_cute_cursor: {
     type: 'boolean',
     default: true
   },
@@ -88,14 +105,48 @@ const schema = {
     type: 'string',
     default: KEY_CLEAR_DESK
   },
+  fade_disappear_after_ms: {
+    type: 'number',
+    default: 1500
+  },
+  fade_out_duration_time_ms: {
+    type: 'number',
+    default: 1000
+  },
+  laser_time: {
+    type: 'number',
+    default: 2000
+  },
+  swap_colors_indexes: {
+    type: 'array',
+    default: [1, 2]
+  },
+  starts_hidden: {
+    type: 'boolean',
+    default: false
+  },
+  drawing_monitor: {
+    type: 'object',
+    default: {
+      mode: 'auto',
+      display_id: null,
+      label: null,
+    }
+  },
 };
 
-// app.getPath('userData') + '/config.json'
+// rawLog('[STORE PATH]:', app.getPath('userData') + '/config.json');
 const store = new Store({
   schema
 });
 
-console.log('Current store: ', store.store)
+if (isDevelopment) {
+  rawLog('Initial store: ', store.store)
+
+  store.onDidAnyChange((newStore, _oldStore) => {
+    rawLog('Updated store: ', newStore)
+  })
+}
 
 let tray
 let mainWindow
@@ -190,6 +241,12 @@ function updateContextMenu() {
     },
     { type: 'separator' },
     {
+      label: 'Capture Screen (Beta)',
+      accelerator: accelForTray(KEY_MAKE_SCREENSHOT),
+      click: makeScreenshot
+    },
+    { type: 'separator' },
+    {
       label: 'About DrawPen',
       click: showAboutWindow
     },
@@ -203,32 +260,26 @@ function updateContextMenu() {
   tray.setContextMenu(contextMenu);
 }
 
-function registerTrayIconUpdate() {
+function registerTrayActions() {
   nativeTheme.on('updated', () => {
     if (!tray) return;
 
     tray.setImage(getTrayIconPath())
   })
-}
 
-function getActiveMonitor() {
-  const activeMonitorId = store.get('active_monitor_id')
-
-  const matchedMonitor = screen.getAllDisplays().find(display => display.id === activeMonitorId)
-  if (matchedMonitor) {
-    return matchedMonitor
+  if (isWin || isLinux) {
+    tray.on('click', () => {
+      toggleDrawWindow()
+    })
   }
-
-  const primaryDisplay = screen.getPrimaryDisplay()
-  store.set('active_monitor_id', primaryDisplay.id)
-
-  return primaryDisplay
 }
 
 function createMainWindow() {
-  const mainDisplay = getActiveMonitor()
+  const currentDisplay = getDrawingDisplay()
 
-  let { width, height } = mainDisplay.workAreaSize
+  store.set('active_monitor_id', currentDisplay.id)
+
+  let { x, y, width, height } = currentDisplay.workArea
   let isResizable = false
   let hasDevTools = false
 
@@ -241,8 +292,8 @@ function createMainWindow() {
 
   mainWindow = new BrowserWindow({
     show: false,
-    x: 0,
-    y: 0,
+    x: x,
+    y: y,
     width: width,
     height: height,
     transparent: true,
@@ -278,7 +329,7 @@ function createMainWindow() {
 
   mainWindow.webContents.on('did-finish-load', () => {
     if (foregroundMode) {
-      showWindowOnActiveScreen();
+      showWindowOnScreen();
     }
   })
 
@@ -377,8 +428,8 @@ function createSettingsWindow() {
 
   settingsWindow = new BrowserWindow({
     show: false,
-    width: 600,
-    height: 650,
+    width: 800,
+    height: 500,
     resizable: false,
     minimizable: false,
     autoHideMenuBar: true,
@@ -423,7 +474,10 @@ app.on('second-instance', () => {
 });
 
 app.commandLine.appendSwitch('disable-pinch');
+
 app.whenReady().then(() => {
+  launchTracker()
+
   preCheck()
 
   hideDock()
@@ -431,7 +485,7 @@ app.whenReady().then(() => {
 
   tray = new Tray(getTrayIconPath())
   updateContextMenu()
-  registerTrayIconUpdate()
+  registerTrayActions()
 
   registerGlobalShortcuts()
 
@@ -454,7 +508,10 @@ app.on('window-all-closed', () => {
 function preCheck() {
   if (safeWasOpenedAtLogin()) {
     foregroundMode = false
+    return
   }
+
+  foregroundMode = !store.get('starts_hidden')
 }
 
 function hideDock() {
@@ -478,18 +535,24 @@ ipcMain.handle('get_settings', () => {
     show_whiteboard: store.get('show_whiteboard'),
     show_tool_bar: store.get('show_tool_bar'),
     show_drawing_border: store.get('show_drawing_border'),
+    show_cute_cursor: store.get('show_cute_cursor'),
     tool_bar_x: store.get('tool_bar_x'),
     tool_bar_y: store.get('tool_bar_y'),
     tool_bar_active_tool: store.get('tool_bar_active_tool'),
     tool_bar_active_color_index: store.get('tool_bar_active_color_index'),
     tool_bar_active_weight_index: store.get('tool_bar_active_weight_index'),
+    tool_bar_default_brush: store.get('tool_bar_default_brush'),
     tool_bar_default_figure: store.get('tool_bar_default_figure'),
-    active_monitor_id: store.get('active_monitor_id'),
+    swap_colors_indexes: store.get('swap_colors_indexes'),
+    fade_disappear_after_ms: store.get('fade_disappear_after_ms'),
+    fade_out_duration_time_ms: store.get('fade_out_duration_time_ms'),
+    laser_time: store.get('laser_time'),
 
     key_binding_show_hide_toolbar:    normalizeAcceleratorForUI(store.get('key_binding_show_hide_toolbar')),
     key_binding_show_hide_whiteboard: normalizeAcceleratorForUI(store.get('key_binding_show_hide_whiteboard')),
     key_binding_clear_desk:           normalizeAcceleratorForUI(store.get('key_binding_clear_desk')),
     key_binding_open_settings:        normalizeAcceleratorForUI(KEY_SETTINGS),
+    key_binding_make_screenshot:      normalizeAcceleratorForUI(KEY_MAKE_SCREENSHOT),
   };
 });
 
@@ -497,7 +560,6 @@ ipcMain.handle('set_settings', (_event, newSettings) => {
   const needUpdateMenu = shouldUpdateMenu(newSettings) // Roundtrip request updates store value
 
   store.set({ ...store.store, ...newSettings })
-  rawLog('Updated store (set settings): ', store.store)
 
   if (needUpdateMenu) {
     rawLog('Update Menu (settings changed)...')
@@ -519,6 +581,39 @@ ipcMain.handle('open_settings', () => {
   return null
 });
 
+ipcMain.handle('make_screenshot', () => {
+  makeScreenshot()
+
+  return null
+});
+
+ipcMain.handle('open_notification', (_event, info) => {
+  if (info.action === 'open_screenshot') {
+    const desktop = app.getPath('desktop')
+    const filePath = path.join(desktop, info.data)
+
+    hideDrawWindow()
+
+    if (fs.existsSync(filePath)) {
+      shell.showItemInFolder(filePath)
+    } else {
+      shell.openPath(desktop)
+    }
+
+    return null
+  }
+
+  if (info.action === 'open_security_preferences') {
+    hideDrawWindow()
+
+    if (isMac) {
+      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+    }
+
+    return null
+  }
+});
+
 ipcMain.handle('reset_to_originals', () => {
   resetApp();
 
@@ -529,9 +624,20 @@ ipcMain.handle('get_configuration', () => {
   rawLog('Getting configuration...')
 
   return {
+    app_version:                              app.getVersion(),
+
     show_drawing_border:                      store.get('show_drawing_border'),
+    show_cute_cursor:                         store.get('show_cute_cursor'),
+    swap_colors_indexes:                      store.get('swap_colors_indexes'),
+    fade_disappear_after_ms:                  store.get('fade_disappear_after_ms'),
+    fade_out_duration_time_ms:                store.get('fade_out_duration_time_ms'),
+    laser_time:                               store.get('laser_time'),
+
+    displays:                                 getAllDisplaysInfo(),
+    drawing_monitor:                          store.get('drawing_monitor'),
     app_icon_color:                           store.get('app_icon_color'),
     launch_on_login:                          store.get('launch_on_login'),
+    starts_hidden:                            store.get('starts_hidden'),
 
     key_binding_show_hide_app:                normalizeAcceleratorForUI(store.get('key_binding_show_hide_app')),
     key_binding_show_hide_app_default:        normalizeAcceleratorForUI(schema.key_binding_show_hide_app.default),
@@ -598,7 +704,6 @@ ipcMain.handle('set_shortcut', (_event, key, value) => {
     mainWindow.reload()
   }
 
-  rawLog('Updated store (shortcut): ', store.store)
   return null
 });
 
@@ -609,7 +714,14 @@ ipcMain.handle('set_launch_on_login', (_event, value) => {
 
   store.set('launch_on_login', value)
 
-  rawLog('Updated store: ', store.store)
+  return null;
+});
+
+ipcMain.handle('set_starts_hidden', (_event, value) => {
+  rawLog('Setting starts hidden:', value)
+
+  store.set('starts_hidden', value)
+
   return null;
 });
 
@@ -618,23 +730,93 @@ ipcMain.handle('set_show_drawing_border', (_event, value) => {
 
   store.set('show_drawing_border', value)
 
+  refreshSettingsInRenderer();
+
+  return null;
+});
+
+ipcMain.handle('set_show_cute_cursor', (_event, value) => {
+  rawLog('Setting cute cursor:', value)
+
+  store.set('show_cute_cursor', value)
+
+  refreshSettingsInRenderer();
+
+  return null;
+});
+
+ipcMain.handle('set_swap_colors', (_event, value) => {
+  rawLog('Setting swap colors:', value)
+
+  store.set('swap_colors_indexes', value)
+
+  refreshSettingsInRenderer();
+
+  return null;
+});
+
+ipcMain.handle('set_fade_disappear_after_ms', (_event, value) => {
+  rawLog('Setting fade disappear after:', value)
+
+  store.set('fade_disappear_after_ms', value)
+
   if (mainWindow) {
     mainWindow.reload()
   }
 
-  rawLog('Updated store: ', store.store)
-  return null;
+  return null
+});
+
+ipcMain.handle('set_fade_out_duration_time_ms', (_event, value) => {
+  rawLog('Setting fade out duration time:', value)
+
+  store.set('fade_out_duration_time_ms', value)
+
+  if (mainWindow) {
+    mainWindow.reload()
+  }
+
+  return null
+});
+
+ipcMain.handle('set_laser_time', (_event, value) => {
+  rawLog('Setting laser time:', value)
+
+  store.set('laser_time', value)
+
+  if (mainWindow) {
+    mainWindow.reload()
+  }
+
+  return null
 });
 
 ipcMain.handle('set_app_icon_color', (_event, value) => {
   rawLog('Setting app icon color:', value)
 
   store.set('app_icon_color', value)
-  rawLog('Updated store: ', store.store)
 
   tray.setImage(getTrayIconPath())
   return null;
 });
+
+ipcMain.handle('set_drawing_monitor', (_event, value) => {
+  rawLog('Setting drawing monitor:', value)
+
+  store.set('drawing_monitor', value)
+
+  return null
+});
+
+function refreshSettingsInRenderer() {
+  if (mainWindow) {
+    mainWindow.webContents.send('refresh_settings', {
+      show_drawing_border: store.get('show_drawing_border'),
+      show_cute_cursor:    store.get('show_cute_cursor'),
+      swap_colors_indexes: store.get('swap_colors_indexes'),
+    })
+  }
+}
 
 function registerGlobalShortcuts() {
   rawLog('REGISTER global shortcuts...')
@@ -679,7 +861,7 @@ function showDrawWindow() {
     createMainWindow()
   }
 
-  showWindowOnActiveScreen()
+  showWindowOnScreen()
 
   foregroundMode = true
   updateContextMenu()
@@ -687,7 +869,6 @@ function showDrawWindow() {
 
 function hideDrawWindow() {
   if (!mainWindow) return
-  if (!mainWindow.isVisible()) return
 
   rawLog('Hiding draw window...')
 
@@ -730,7 +911,13 @@ function resetApp() {
 
     unRegisterGlobalShortcuts()
 
+    const preservedUserId = store.get('user_id')
+
     store.clear()
+
+    if (preservedUserId) {
+      store.set('user_id', preservedUserId)
+    }
 
     registerGlobalShortcuts()
 
@@ -766,8 +953,121 @@ function quitApp() {
   });
 }
 
-function showWindowOnActiveScreen() {
-  const currentDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+function screenshotTimecode4(date) {
+  let value = date.getHours() * 3600 +
+              date.getMinutes() * 60 +
+              date.getSeconds(); // 0..86399
+
+  let code = '';
+  for (let i = 0; i < 4; i++) {
+    code = String.fromCharCode(97 + (value % 26)) + code;
+    value = Math.floor(value / 26);
+  }
+
+  return code;
+}
+
+function screenshotFilename(withUniqSuffix = false) {
+  const date = new Date()
+
+  const yyyy = date.getFullYear();
+  const mm = (date.getMonth() + 1).toString().padStart(2, '0');
+  const dd = (date.getDate()).toString().padStart(2, '0');
+
+  const code = screenshotTimecode4(date);
+  const suffix = withUniqSuffix ? `-${Date.now()}` : '';
+
+  return `DRWPN-${yyyy}${mm}${dd}-${code}${suffix}.png`;
+}
+
+async function makeScreenshot() {
+  if (!mainWindow) return
+
+  if (!foregroundMode) {
+    showDrawWindow()
+  }
+
+  try {
+    rawLog('Exporting as PNG...')
+
+    if (isMac) {
+      const status = systemPreferences.getMediaAccessStatus('screen');
+      if (status !== 'granted') {
+        // NOTE: Adds an app to Screen & System Audio Recording list
+        try {
+          await desktopCapturer.getSources({
+            types: ['screen'],
+            thumbnailSize: { width: 1, height: 1 },
+          });
+        } catch (_) {}
+
+        throw new Error('Screen Recording permission is not granted.');
+      }
+    }
+
+    const activeMonitor = getActiveDisplay()
+
+    const thumbnailSize = {
+      width: Math.round(activeMonitor.size.width * (activeMonitor.scaleFactor || 1)),
+      height: Math.round(activeMonitor.size.height * (activeMonitor.scaleFactor || 1)),
+    };
+
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize,
+    });
+
+    if (sources.length === 0) {
+      throw new Error('No screen sources available for capture.')
+    }
+
+    const source =
+      sources.find(s => String(s.display_id ?? s.displayId ?? '') === String(activeMonitor.id)) ||
+      sources.find(source => {
+        const { width, height } = source.thumbnail.getSize()
+        return width === thumbnailSize.width && height === thumbnailSize.height
+      }) ||
+      sources[0];
+
+    const image = source.thumbnail;
+
+    if (!image || image.isEmpty()) {
+      throw new Error('Could not capture the screen.')
+    }
+
+    let savePath = path.join(app.getPath('desktop'), screenshotFilename());
+    if (fs.existsSync(savePath)) {
+      savePath = path.join(app.getPath('desktop'), screenshotFilename(true));
+    }
+
+    await fs.promises.writeFile(savePath, image.toPNG());
+
+    sendNotification({
+      title: `Click to open ${isMac ? 'in Finder' : 'folder'}`,
+      body: savePath,
+      button_label: 'Open',
+      button_action: 'open_screenshot',
+      button_data: path.basename(savePath),
+    });
+  } catch (error) {
+    sendNotification({
+      title: 'Image export failed',
+      body: error.message,
+      button_label: isMac ? 'Settings' : null,
+      button_action: isMac ? 'open_security_preferences' : null,
+      button_data: null,
+    });
+  }
+}
+
+function sendNotification(data) {
+  if (mainWindow) {
+    mainWindow.webContents.send('show_notification', data);
+  }
+}
+
+function showWindowOnScreen() {
+  const currentDisplay = getDrawingDisplay()
 
   if (store.get('active_monitor_id') === currentDisplay.id) {
     mainWindow.show()
@@ -787,6 +1087,46 @@ function showWindowOnActiveScreen() {
   store.reset('tool_bar_x')
   store.reset('tool_bar_y')
   mainWindow.reload()
+  mainWindow.show()
+}
+
+function getActiveDisplay() {
+  const activeMonitorId = store.get('active_monitor_id')
+
+  const matchedMonitor = screen.getAllDisplays().find(display => display.id === activeMonitorId)
+  if (matchedMonitor) {
+    return matchedMonitor
+  }
+
+  return getDrawingDisplay()
+}
+
+function getDrawingDisplay() {
+  const drawingMonitor = store.get('drawing_monitor')
+
+  if (drawingMonitor.mode === 'fixed') {
+    const fixedDisplay = screen.getAllDisplays().find(display => String(display.id) === drawingMonitor.display_id)
+
+    if (fixedDisplay) {
+      return fixedDisplay
+    }
+  }
+
+  return screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+}
+
+function getAllDisplaysInfo() {
+  const allDisplays = screen.getAllDisplays()
+
+  return allDisplays.map(display => {
+    const displayName = display.label || `Display ${display.id}`
+    const resolution = `${display.size.width}x${display.size.height}`
+
+    return {
+      id: String(display.id),
+      label: `${displayName} (${resolution})`,
+    }
+  })
 }
 
 function normalizeAcceleratorForUI(value) {
@@ -869,6 +1209,39 @@ function safeSetLoginItemSettings(settings) {
   try {
     app.setLoginItemSettings(settings)
   } catch (error) {}
+}
+
+function launchTracker() {
+  if (isDevelopment) { return }
+
+  try {
+    const key = process.env.PUBLIC_POSTHOG_KEY;
+
+    if (!key || key === 'undefined' || key === '') {
+      return;
+    }
+
+    const posthog = new PostHog(key, {
+      host: 'https://us.i.posthog.com',
+      flushAt: 1
+    })
+
+    posthog.capture({
+      distinctId: store.get('user_id') || 'anonymous',
+      event: 'app_launch',
+      properties: {
+        platform: 'app',
+
+        app_version: app.getVersion(),
+
+        os_platform: os.platform(),
+        os_release:  os.release(),
+        arch:        os.arch(),
+
+        config: store.store,
+      }
+    })
+  } catch (_) {}
 }
 
 function rawLog(message, ...args) {

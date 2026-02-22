@@ -4,6 +4,8 @@ const path = require('path');
 const packageJson = require('./../../package.json');
 const rootDir = process.cwd();
 
+const linuxIconPng = path.join(rootDir, 'assets/build/icon_512.png');
+
 module.exports = {
   packagerConfig: {
     asar: true,
@@ -48,11 +50,53 @@ module.exports = {
     },
     {
       name: "@electron-forge/maker-deb",
-      config: {}
+      config: {
+        options: {
+          icon: linuxIconPng,
+          categories: ['Graphics', 'Utility'],
+          maintainer: "Dmytro Vasin",
+          homepage: 'https://drawpen.app'
+        }
+      }
     },
     {
       name: "@electron-forge/maker-rpm",
-      config: {}
+      config: {
+        options: {
+          icon: linuxIconPng,
+          categories: ['Graphics', 'Utility'],
+          homepage: 'https://drawpen.app'
+        }
+      }
+    },
+    {
+      // Second RPM: forces X11 via Exec args in generated .desktop
+      name: "@electron-forge/maker-rpm",
+      config: {
+        options: {
+          name: "drawpen-x11",
+          productName: "DrawPen (X11)",
+          icon: linuxIconPng,
+          categories: ['Graphics', 'Utility'],
+          homepage: 'https://drawpen.app',
+          execArguments: ['--ozone-platform=x11'],
+        }
+      }
+    },
+    {
+      // Second DEB: forces X11 via custom .desktop template
+      name: "@electron-forge/maker-deb",
+      config: {
+        options: {
+          name: "drawpen-x11",
+          productName: "DrawPen (X11)",
+          icon: linuxIconPng,
+          categories: ['Graphics', 'Utility'],
+          maintainer: "Dmytro Vasin",
+          homepage: 'https://drawpen.app',
+          desktopTemplate: path.join(rootDir, 'assets/build/desktop-x11.desktop.ejs'),
+        }
+      }
     },
     {
       name: "@electron-forge/maker-zip",

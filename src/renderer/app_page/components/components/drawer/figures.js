@@ -1,36 +1,53 @@
-import { getStroke } from 'perfect-freehand';
-import { getSvgPathFromStroke, getLazyPoints, distanceBetweenPoints } from '../../utils/general.js';
+import {
+  getPerfectPath2D,
+  getLazyPoints,
+  distanceBetweenPoints,
+  calcPointsArrow,
+  calcSegmentsFlatArrow,
+  buildArrowArcSegments,
+  isSmallArrowFigure,
+} from '../../utils/general.js';
 import {
   colorList,
   widthList,
   rainbowScaleFactor,
-  dotMargin,
+  dotTextMargin,
+  dotRadius,
+  dotStrokeWidth,
+  dotHoverRadius,
+  dotBorderColor,
+  dotHoverColor,
   erasedFigureColor,
-  erasedFigureColorWithOpacity,
   eraserTailColor,
+  highlighterAlpha,
+  eraserAlpha,
 } from '../../constants.js'
 
 const hslColor = (degree) => {
   return `hsl(${degree % 360}, 70%, 60%)`
 }
 
-const drawDot = (ctx, point) => {
+function fadeAlpha(opacity) {
+  return Math.round(opacity * 255).toString(16).padStart(2, '0');
+}
+
+const drawDot = (ctx, point, isHovered) => {
   const [x, y] = point;
 
-  ctx.beginPath();
-  ctx.arc(x, y, 9, 0, Math.PI*2, true);
-  ctx.fillStyle = '#DDD';
-  ctx.fill();
+  if (isHovered) {
+    ctx.beginPath();
+    ctx.arc(x, y, dotHoverRadius, 0, Math.PI * 2, true);
+    ctx.fillStyle = dotHoverColor;
+    ctx.fill();
+  }
 
   ctx.beginPath();
-  ctx.arc(x, y, 8, 0, Math.PI*2, true);
+  ctx.arc(x, y, dotRadius, 0, Math.PI * 2, true);
   ctx.fillStyle = '#FFF';
   ctx.fill();
-
-  ctx.beginPath();
-  ctx.arc(x, y, 6, 0, Math.PI*2, true);
-  ctx.fillStyle = '#6CC3E2';
-  ctx.fill();
+  ctx.lineWidth = dotStrokeWidth;
+  ctx.strokeStyle = dotBorderColor;
+  ctx.stroke();
 }
 
 const createGradient = (ctx, pointA, pointB, rainbowColorDeg, updateRainbowColorDeg) => {
@@ -71,12 +88,13 @@ export const hslTextGradientStops = (pointA, pointB, colorDeg) => {
 
 const activeColorAndWidth = (figure) => {
   const { colorIndex } = figure;
+  const width = 2;
 
   if (colorList[colorIndex].name === 'color_white') {
-    return ['#6CC3E2', 2]
+    return ['#6CC3E2', width]
   }
 
-  return ['#FFF', 2]
+  return ['#FFF', width]
 }
 
 const detectColorAndWidth = (ctx, figure, updateRainbowColorDeg) => {
@@ -90,7 +108,7 @@ const detectColorAndWidth = (ctx, figure, updateRainbowColorDeg) => {
   }
 
   if (erased) {
-    color = erasedFigureColorWithOpacity;
+    color = erasedFigureColor + fadeAlpha(eraserAlpha);
   }
 
   return [color, width]
@@ -115,7 +133,7 @@ const detectColorAndFontSize = (ctx, figure, updateRainbowColorDeg) => {
   }
 
   if (erased) {
-    color = erasedFigureColorWithOpacity;
+    color = erasedFigureColor + fadeAlpha(eraserAlpha);
   }
 
   return [color, fontSize, font_y_offset_compensation]
@@ -131,30 +149,53 @@ export const getCursorColor = (colorIndex, rainbowColorDeg) => {
   return colorInfo.color
 }
 
-export const drawPen = (ctx, figure, updateRainbowColorDeg) => {
+export const drawPen = (ctx, figure, fadeOpacity = 1) => {
   const { points, colorIndex, widthIndex } = figure;
 
   const colorInfo = colorList[colorIndex]
   const widthInfo = widthList[widthIndex]
 
-  if (colorInfo.name === 'color_rainbow') {
-    drawLazyPen(ctx, figure, widthInfo.rainbow_pen_width, updateRainbowColorDeg)
-    return;
-  }
-
   let penColor = colorInfo.color
+
   if (figure.erased) {
-    penColor = erasedFigureColorWithOpacity
+    penColor = erasedFigureColor + fadeAlpha(Math.min(eraserAlpha, fadeOpacity));
+  } else if (fadeOpacity < 1) {
+    penColor = colorInfo.color + fadeAlpha(fadeOpacity);
   }
 
-  drawPerfectPen(ctx, points, penColor, { size: widthInfo.pen_width })
+  const path2DData = getPerfectPath2D(points, { size: widthInfo.pen_width });
+
+  ctx.fillStyle = penColor;
+  ctx.fill(path2DData);
 }
 
-const drawLazyPen = (ctx, figure, width, updateRainbowColorDeg) => {
+export const drawRainbowPen = (ctx, offscreenCanvas, figure, updateRainbowColorDeg, fadeOpacity = 1) => {
+  const { widthIndex } = figure;
+
+  const offCtx = offscreenCanvas.getContext('2d');
+  offCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+
+  const widthInfo = widthList[widthIndex]
+
+  drawLazyRainbowLine(offCtx, figure, updateRainbowColorDeg, widthInfo.rainbow_pen_width)
+
+  let alpha = fadeOpacity;
+
+  if (figure.erased) {
+    alpha = Math.min(eraserAlpha, fadeOpacity);
+  }
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.resetTransform();
+  ctx.drawImage(offscreenCanvas, 0, 0);
+  ctx.restore();
+}
+
+const drawLazyRainbowLine = (ctx, figure, updateRainbowColorDeg, width) => {
   const { points, rainbowColorDeg, erased } = figure;
 
   const lazyPoints = getLazyPoints(points, { size: width })
-
   let colorDeg = rainbowColorDeg
 
   lazyPoints.forEach((point, index) => {
@@ -165,20 +206,11 @@ const drawLazyPen = (ctx, figure, width, updateRainbowColorDeg) => {
 
     const distance = distanceBetweenPoints(pointA, pointB) * rainbowScaleFactor
 
-    const amountOfColorChanges = Math.round(distance)
-
     let color
     if (erased) {
       color = erasedFigureColor
-    } else if (amountOfColorChanges === 0) {
-      color = hslColor(colorDeg)
-    } else {
-      const gradient = ctx.createLinearGradient(...pointA, ...pointB);
-
-      gradient.addColorStop(0, hslColor(colorDeg))
-      gradient.addColorStop(1, hslColor(colorDeg + distance))
-
-      color = gradient
+    } else  {
+      color = hslColor(colorDeg + distance / 2);
     }
 
     ctx.beginPath()
@@ -198,118 +230,77 @@ const drawLazyPen = (ctx, figure, width, updateRainbowColorDeg) => {
   updateRainbowColorDeg(colorDeg)
 }
 
-const drawPerfectPen = (ctx, points, color, options) => {
-  const myStroke = getStroke(points, options);
-  const pathData = getSvgPathFromStroke(myStroke);
-  const path2DData = new Path2D(pathData);
-
-  ctx.fillStyle = color;
-  ctx.fill(path2DData);
-}
-
 export const drawHighlighter = (ctx, figure) => {
   const { points, colorIndex, widthIndex } = figure;
 
   const colorInfo = colorList[colorIndex]
   const widthInfo = widthList[widthIndex]
 
-  let highlighterColor = colorInfo.highlighterColor
+  let highlighterColor = colorInfo.color + fadeAlpha(highlighterAlpha);
   if (figure.erased) {
-    highlighterColor = erasedFigureColorWithOpacity
+    highlighterColor = erasedFigureColor + fadeAlpha(highlighterAlpha);
   }
 
-  drawPerfectPen(ctx, points, highlighterColor, { size: widthInfo.highlighter_width, simulatePressure: false, thinning: 0.0 });
+  const path2DData = getPerfectPath2D(points, {
+    size: widthInfo.highlighter_width,
+    simulatePressure: false,
+    thinning: 0.0
+  });
+
+  ctx.fillStyle = highlighterColor;
+  ctx.fill(path2DData);
 }
 
-const getArrowParams = (pointA, pointB, widthIndex) => {
-  const minArrowLength = 20;
-  const minTailSize = 1;
-  const arrowSetup = [
-    { max_scale_length: 100, d1_y: 1, d2_y: 5,  d3_y: 15, d2_x: 13, d3_x: 15 },
-    { max_scale_length: 200, d1_y: 2, d2_y: 7,  d3_y: 21, d2_x: 18, d3_x: 20 },
-    { max_scale_length: 300, d1_y: 3, d2_y: 12, d3_y: 36, d2_x: 38, d3_x: 40 },
-    { max_scale_length: 400, d1_y: 4, d2_y: 17, d3_y: 51, d2_x: 58, d3_x: 60 },
-  ]
+export const drawRainbowHighlighter = (ctx, offscreenCanvas, figure, updateRainbowColorDeg) => {
+  const { widthIndex } = figure;
 
-  const arrow = arrowSetup[widthIndex]
+  const offCtx = offscreenCanvas.getContext('2d');
+  offCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
 
-  // ---
+  const widthInfo = widthList[widthIndex]
 
-  const [startX, startY] = pointA;
-  const [endX, endY] = pointB;
+  drawLazyRainbowLine(offCtx, figure, updateRainbowColorDeg, widthInfo.highlighter_width);
 
-  const diffX = endX - startX;
-  const diffY = endY - startY;
-  let length = Math.sqrt(diffX ** 2 + diffY ** 2);
+  let alpha = highlighterAlpha;
 
-  const cos = diffX / length;
-  const sin = diffY / length;
-
-  length = Math.max(length, minArrowLength);
-  let scaleFactor = Math.min(length / arrow.max_scale_length, 1)
-
-  // ---
-
-  const d1 = [0,                                      Math.max(arrow.d1_y * scaleFactor, minTailSize)]
-  const d2 = [length - arrow.d2_x * scaleFactor,      arrow.d2_y * scaleFactor]
-  const d3 = [length - arrow.d3_x * scaleFactor,      arrow.d3_y * scaleFactor]
-  const d4 = [length,                                 0]
-  const d5 = [d3[0],                                  d3[1] * -1]
-  const d6 = [d2[0],                                  d2[1] * -1]
-  const d7 = [d1[0],                                  d1[1] * -1]
-
-  const t1 = [ -2 * d1[1],                            d7[1]]
-  const t2 = [ -2 * d1[1],                            d1[1]]
-
-  function transformPoint([x, y]) {
-    return [
-      startX + x * cos - y * sin,
-      startY + x * sin + y * cos
-    ];
-  }
-
-  const figurePoints = [d1, d2, d3, d4, d5, d6, d7].map(transformPoint)
-  const tailPoints = [t1, t2].map(transformPoint)
-
-  return { figurePoints, tailPoints }
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.resetTransform();
+  ctx.drawImage(offscreenCanvas, 0, 0);
+  ctx.restore();
 }
 
 export const drawArrow = (ctx, figure, updateRainbowColorDeg) => {
-  const { points: [pointA, pointB], colorIndex, widthIndex, rainbowColorDeg, erased } = figure;
-  const { figurePoints, tailPoints } = getArrowParams(pointA, pointB, widthIndex);
+  const { points, widthIndex } = figure;
 
-  let fillStyle = colorList[colorIndex].color
-  let shadowColor = '#222';
-  let shadowBlur = 4;
-  let shadowOffsetX = 1;
-  let shadowOffsetY = 2;
+  const isSmallArrow = isSmallArrowFigure(points, widthIndex);
+  const figurePoints = calcPointsArrow(points, widthIndex);
+  const arcSegments = buildArrowArcSegments(figurePoints, widthIndex);
 
-  if (colorList[colorIndex].name === 'color_rainbow') {
-    fillStyle = createGradient(ctx, pointA, pointB, rainbowColorDeg, updateRainbowColorDeg)
-  }
+  const [color] = detectColorAndWidth(ctx, figure, updateRainbowColorDeg)
+  const shadowColor = '#222';
+  const shadowBlur = 2;
+  const shadowOffsetX = 1;
+  const shadowOffsetY = 2;
 
-  if (erased) {
-    fillStyle = erasedFigureColorWithOpacity;
-  }
-
-  ctx.fillStyle = fillStyle;
+  ctx.fillStyle = color;
   ctx.shadowColor = shadowColor;
   ctx.shadowBlur = shadowBlur;
   ctx.shadowOffsetX = shadowOffsetX;
   ctx.shadowOffsetY = shadowOffsetY;
 
   ctx.beginPath();
+  ctx.moveTo(...figurePoints[0]);
 
-  figurePoints.forEach((point, index) => {
-    if (index === 0) {
-      ctx.moveTo(...point)
-      return
+  arcSegments.forEach(({ entryPoint, cornerPoint, exitPoint, arcRadius }) => {
+    if (isSmallArrow) {
+      ctx.lineTo(...cornerPoint);
+      return;
     }
 
-    ctx.lineTo(...point)
+    ctx.lineTo(...entryPoint);
+    ctx.arcTo(cornerPoint[0], cornerPoint[1], exitPoint[0], exitPoint[1], arcRadius);
   });
-
-  ctx.bezierCurveTo(...tailPoints[0], ...tailPoints[1], ...figurePoints[0]);
 
   ctx.closePath();
   ctx.fill();
@@ -318,11 +309,21 @@ export const drawArrow = (ctx, figure, updateRainbowColorDeg) => {
   ctx.shadowColor = 'transparent'; // Reset shadows
 }
 
-export const drawArrowActive = (ctx, figure) => {
-  const [pointA, pointB] = figure.points
+export const drawArrowActive = (ctx, figure, hoveredDot) => {
+  drawDotsForFigure(ctx, figure, hoveredDot)
+}
 
-  drawDot(ctx, pointA)
-  drawDot(ctx, pointB)
+export const drawFlatArrow = (ctx, figure, updateRainbowColorDeg) => {
+  const [color, width] = detectColorAndWidth(ctx, figure, updateRainbowColorDeg)
+  const segments = calcSegmentsFlatArrow(figure.points, figure.widthIndex)
+
+  segments.forEach(([pointA, pointB]) => {
+    drawLineSkeleton(ctx, pointA, pointB, color, width)
+  })
+}
+
+export const drawFlatArrowActive = (ctx, figure, hoveredDot) => {
+  drawDotsForFigure(ctx, figure, hoveredDot)
 }
 
 export const drawLine = (ctx, figure, updateRainbowColorDeg) => {
@@ -332,14 +333,13 @@ export const drawLine = (ctx, figure, updateRainbowColorDeg) => {
   drawLineSkeleton(ctx, pointA, pointB, color, width)
 }
 
-export const drawLineActive = (ctx, figure) => {
+export const drawLineActive = (ctx, figure, hoveredDot) => {
   const [pointA, pointB] = figure.points
   const [color, width] = activeColorAndWidth(figure)
 
   drawLineSkeleton(ctx, pointA, pointB, color, width)
 
-  drawDot(ctx, pointA)
-  drawDot(ctx, pointB)
+  drawDotsForFigure(ctx, figure, hoveredDot)
 }
 
 const drawLineSkeleton = (ctx, pointA, pointB, color, width) => {
@@ -363,19 +363,13 @@ export const drawOval = (ctx, figure, updateRainbowColorDeg) => {
   drawOvalSkeleton(ctx, pointA, pointB, color, width)
 }
 
-export const drawOvalActive = (ctx, figure) => {
+export const drawOvalActive = (ctx, figure, hoveredDot) => {
   const [pointA, pointB] = figure.points
   const [color, width] = activeColorAndWidth(figure)
 
   drawOvalSkeleton(ctx, pointA, pointB, color, width)
 
-  const [startX, startY] = pointA;
-  const [endX, endY] = pointB;
-
-  drawDot(ctx, pointA)
-  drawDot(ctx, pointB)
-  drawDot(ctx, [startX, endY])
-  drawDot(ctx, [endX, startY])
+  drawDotsForFigure(ctx, figure, hoveredDot)
 }
 
 const drawOvalSkeleton = (ctx, pointA, pointB, color, width) => {
@@ -403,19 +397,12 @@ export const drawRectangle = (ctx, figure, updateRainbowColorDeg) => {
   drawRectangleSkeleton(ctx, pointA, pointB, color, width)
 }
 
-export const drawRectangleActive = (ctx, figure) => {
+export const drawRectangleActive = (ctx, figure, hoveredDot) => {
   const [pointA, pointB] = figure.points
   const [color, width] = activeColorAndWidth(figure)
 
   drawRectangleSkeleton(ctx, pointA, pointB, color, width)
-
-  const [startX, startY] = pointA;
-  const [endX, endY] = pointB;
-
-  drawDot(ctx, pointA)
-  drawDot(ctx, pointB)
-  drawDot(ctx, [startX, endY])
-  drawDot(ctx, [endX, startY])
+  drawDotsForFigure(ctx, figure, hoveredDot)
 }
 
 const drawRectangleSkeleton = (ctx, pointA, pointB, color, width) => {
@@ -453,25 +440,27 @@ export const drawLaser = (ctx, figure) => {
   const { points, widthIndex } = figure
   const [innerWidth, otherWidth] = widthList[widthIndex].laser_width;
 
-  ctx.shadowBlur = 10;
-  ctx.shadowColor = '#FF2D21';
-  ctx.fillStyle = '#EA3323CC';
-  const myStroke1 = getStroke(points, {
+  const path2DDataOther = getPerfectPath2D(points, {
     size: otherWidth,
     simulatePressure: false,
     start: { taper: true, cap: true },
   });
-  const pathData1 = getSvgPathFromStroke(myStroke1);
-  ctx.fill(new Path2D(pathData1));
 
-  ctx.fillStyle = '#FFF';
-  const myStroke2 = getStroke(points, {
+  const path2DDataInner = getPerfectPath2D(points, {
     size: innerWidth,
     simulatePressure: false,
     start: { taper: true, cap: true },
   });
-  const pathData2 = getSvgPathFromStroke(myStroke2);
-  ctx.fill(new Path2D(pathData2));
+
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = '#FF2D21';
+  ctx.fillStyle = '#EA3323CC';
+
+  ctx.fill(path2DDataOther);
+
+  ctx.fillStyle = '#FFF';
+
+  ctx.fill(path2DDataInner);
 
   ctx.shadowBlur = 0;
   ctx.shadowColor = 'transparent'; // Reset shadows
@@ -481,20 +470,21 @@ export const drawEraserTail = (ctx, figure) => {
   const { points, widthIndex } = figure
   const width = widthList[widthIndex].figure_size
 
-  ctx.shadowBlur = 10;
-  ctx.fillStyle = eraserTailColor;
-  const myStroke1 = getStroke(points, {
+  const path2DData = getPerfectPath2D(points, {
     size: width,
     simulatePressure: false,
     start: { taper: true, cap: true },
   });
-  const pathData1 = getSvgPathFromStroke(myStroke1);
-  ctx.fill(new Path2D(pathData1));
+
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = eraserTailColor;
+
+  ctx.fill(path2DData);
 
   ctx.shadowBlur = 0;
 }
 
-export const drawText = (ctx, figure, updateRainbowColorDeg, isActive) => {
+export const drawText = (ctx, figure, updateRainbowColorDeg, isActive, hoveredDot) => {
   const { points: [startAt], text, scale, width, height } = figure;
 
   const [color, fontSize, font_y_offset_compensation] = detectColorAndFontSize(ctx, figure, updateRainbowColorDeg)
@@ -506,16 +496,17 @@ export const drawText = (ctx, figure, updateRainbowColorDeg, isActive) => {
     const endX = startX + width * scale;
     const endY = startY + height * scale;
 
-    const startXwithMargin = startX - dotMargin
-    const startYwithMargin = startY - dotMargin
-    const endXwithMargin = endX + dotMargin
-    const endYwithMargin = endY + dotMargin
+    const startXwithMargin = startX - dotTextMargin
+    const startYwithMargin = startY - dotTextMargin
+    const endXwithMargin = endX + dotTextMargin
+    const endYwithMargin = endY + dotTextMargin
 
     drawSelectionBox(ctx, startXwithMargin, startYwithMargin, endXwithMargin, endYwithMargin)
-    drawDot(ctx, [startXwithMargin, startYwithMargin])
-    drawDot(ctx, [endXwithMargin,   endYwithMargin])
-    drawDot(ctx, [startXwithMargin, endYwithMargin])
-    drawDot(ctx, [endXwithMargin,   startYwithMargin])
+
+    drawDot(ctx, [startXwithMargin, startYwithMargin], hoveredDot === 'pointAScale')
+    drawDot(ctx, [endXwithMargin,   endYwithMargin],   hoveredDot === 'pointBScale')
+    drawDot(ctx, [startXwithMargin, endYwithMargin],   hoveredDot === 'pointCScale')
+    drawDot(ctx, [endXwithMargin,   startYwithMargin], hoveredDot === 'pointDScale')
 
     // FOR DEV: Обведення прямокутника
     // ctx.strokeStyle = "red";
@@ -549,4 +540,19 @@ const drawSelectionBox = (ctx, startX, startY, endX, endY) => {
   ctx.strokeStyle = "#6CC3E2";
   ctx.lineWidth = 1;
   ctx.strokeRect(startX, startY, endX - startX, endY - startY);
+}
+
+const drawDotsForFigure = (ctx, figure, hoveredDot) => {
+  const [pointA, pointB] = figure.points
+
+  drawDot(ctx, pointA, hoveredDot === 'pointA')
+  drawDot(ctx, pointB, hoveredDot === 'pointB')
+
+  if (['rectangle', 'oval'].includes(figure.type)) {
+    const [startX, startY] = pointA;
+    const [endX, endY] = pointB;
+
+    drawDot(ctx, [startX, endY], hoveredDot === 'pointC')
+    drawDot(ctx, [endX, startY], hoveredDot === 'pointD')
+  }
 }

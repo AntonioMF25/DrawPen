@@ -1,14 +1,19 @@
 import './DrawDesk.scss';
 
 import React, { useEffect, useRef } from 'react';
+import { colorList } from '../constants.js'
 import { getMouseCoordinates } from '../utils/general.js';
 import {
   drawPen,
+  drawRainbowPen,
   drawHighlighter,
+  drawRainbowHighlighter,
   drawLine,
   drawLineActive,
   drawArrow,
   drawArrowActive,
+  drawFlatArrow,
+  drawFlatArrowActive,
   drawOval,
   drawOvalActive,
   drawRectangle,
@@ -20,8 +25,10 @@ import {
 
 const DrawDesk = ({
   allFigures,
+  allFadeFigures,
   allLaserFigures,
   allEraserFigures,
+  fadeOpacity,
   activeFigureInfo,
   cursorType,
   handleMouseDown,
@@ -29,12 +36,20 @@ const DrawDesk = ({
   handleMouseUp,
   handleDoubleClick,
   updateRainbowColorDeg,
+  activeTool,
+  handleChangeTool,
 }) => {
-  // console.log('DrawDesk render');
+
   const canvasRef = useRef(null);
+  const offscreenCanvasRef = useRef(null);
+
+  const prevToolRef = useRef(null);
+  const simulateKeyDown = useRef(false);
+
   const dpr = window.devicePixelRatio || 1;
 
   useEffect(() => {
+    // Main canvas layer setup
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
 
@@ -45,30 +60,59 @@ const DrawDesk = ({
 
     canvas.style.width = `${window.innerWidth}px`;
     canvas.style.height = `${window.innerHeight}px`;
+
+    // Offscreen canvas layer setup
+    if (!offscreenCanvasRef.current) {
+      offscreenCanvasRef.current = document.createElement('canvas');
+    }
+
+    const offscreenCanvas = offscreenCanvasRef.current;
+    const offCtx = offscreenCanvas.getContext('2d');
+
+    offscreenCanvas.width = canvas.width;
+    offscreenCanvas.height = canvas.height;
+
+    offCtx.scale(dpr, dpr);
   }, []);
 
   useEffect(() => {
-    draw(allFigures, allLaserFigures, allEraserFigures, activeFigureInfo)
-  }, [allFigures, allLaserFigures, allEraserFigures, activeFigureInfo]);
+    draw(allFigures, allFadeFigures, allLaserFigures, allEraserFigures, activeFigureInfo, fadeOpacity, offscreenCanvasRef.current);
+  }, [allFigures, allFadeFigures, allLaserFigures, allEraserFigures, activeFigureInfo, fadeOpacity]);
 
-  const draw = (allFigures, allLaserFigures, allEraserFigures, activeFigureInfo) => {
+  const draw = (allFigures, allFadeFigures, allLaserFigures, allEraserFigures, activeFigureInfo, fadeOpacity, offscreenCanvas) => {
     const ctx = canvasRef.current.getContext('2d');
     ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
     allFigures.forEach((figure) => {
       if (figure.type === 'pen') {
-        drawPen(ctx, figure, updateRainbowColorDeg)
+        if (colorList[figure.colorIndex].name === 'color_rainbow') {
+          drawRainbowPen(ctx, offscreenCanvas, figure, updateRainbowColorDeg)
+        } else {
+          drawPen(ctx, figure)
+        }
       }
 
       if (figure.type === 'highlighter') {
-        drawHighlighter(ctx, figure)
+        if (colorList[figure.colorIndex].name === 'color_rainbow') {
+          drawRainbowHighlighter(ctx, offscreenCanvas, figure, updateRainbowColorDeg)
+        } else {
+          drawHighlighter(ctx, figure)
+        }
       }
 
       if (figure.type === 'arrow') {
         drawArrow(ctx, figure, updateRainbowColorDeg)
 
         if (activeFigureInfo && figure.id === activeFigureInfo.id) {
-          drawArrowActive(ctx, figure)
+          drawArrowActive(ctx, figure, activeFigureInfo.hoveredDotName)
+        }
+      }
+
+      if (figure.type === 'flat_arrow') {
+        drawFlatArrow(ctx, figure, updateRainbowColorDeg)
+
+        if (activeFigureInfo && figure.id === activeFigureInfo.id) {
+          drawFlatArrowActive(ctx, figure, activeFigureInfo.hoveredDotName)
         }
       }
 
@@ -76,7 +120,7 @@ const DrawDesk = ({
         drawLine(ctx, figure, updateRainbowColorDeg)
 
         if (activeFigureInfo && figure.id === activeFigureInfo.id) {
-          drawLineActive(ctx, figure)
+          drawLineActive(ctx, figure, activeFigureInfo.hoveredDotName)
         }
       }
 
@@ -84,7 +128,7 @@ const DrawDesk = ({
         drawRectangle(ctx, figure, updateRainbowColorDeg)
 
         if (activeFigureInfo && figure.id === activeFigureInfo.id) {
-          drawRectangleActive(ctx, figure)
+          drawRectangleActive(ctx, figure, activeFigureInfo.hoveredDotName)
         }
       }
 
@@ -92,18 +136,30 @@ const DrawDesk = ({
         drawOval(ctx, figure, updateRainbowColorDeg)
 
         if (activeFigureInfo && figure.id === activeFigureInfo.id) {
-          drawOvalActive(ctx, figure)
+          drawOvalActive(ctx, figure, activeFigureInfo.hoveredDotName)
         }
       }
 
       if (figure.type === 'text') {
         let isActive = false;
+        let dotName = null;
 
         if (activeFigureInfo && figure.id === activeFigureInfo.id) {
           isActive = true;
+          dotName = activeFigureInfo.hoveredDotName;
         }
 
-        drawText(ctx, figure, updateRainbowColorDeg, isActive)
+        drawText(ctx, figure, updateRainbowColorDeg, isActive, dotName)
+      }
+    })
+
+    allFadeFigures.forEach((figure) => {
+      if (figure.type === 'fadepen') {
+        if (colorList[figure.colorIndex].name === 'color_rainbow') {
+          drawRainbowPen(ctx, offscreenCanvas, figure, updateRainbowColorDeg, fadeOpacity)
+        } else {
+          drawPen(ctx, figure, fadeOpacity)
+        }
       }
     })
 
@@ -116,27 +172,62 @@ const DrawDesk = ({
     })
   };
 
-  const onMouseDown = (event) => {
-    if(event.button === 2) return;
-
-    const coordinates = getMouseCoordinates(event)
-
-    handleMouseDown(coordinates);
-
-    event.preventDefault();
-    // event.stopPropagation();
+  const isPenEraser = (event) => {
+    return (event.pointerType === 'pen' && event.button === 5) ||
+           (event.pointerType === 'mouse' && event.button === 1);
   }
 
-  const onMouseMove = (event) => {
+  const onPointerDown = (event) => {
+    event.preventDefault(); // NOTE: Required for Text figure
+
+    if(event.pointerType === 'mouse' && event.button === 2) return;
+
+    if (isPenEraser(event) && activeTool !== 'eraser') {
+      // Hard Trick! Rethink!
+      prevToolRef.current = activeTool;
+      simulateKeyDown.current = true;
+
+      handleChangeTool('eraser');
+      return
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    const coordinates = getMouseCoordinates(event)
+    handleMouseDown(coordinates);
+  }
+
+  const onPointerMove = (event) => {
+    if (simulateKeyDown.current && activeTool === 'eraser') {
+      simulateKeyDown.current = false;
+
+      event.currentTarget.setPointerCapture(event.pointerId);
+
+      const coordinates = getMouseCoordinates(event)
+      handleMouseDown(coordinates);
+
+      return;
+    }
+
     const coordinates = getMouseCoordinates(event)
 
     handleMouseMove(coordinates);
   }
 
-  const onMouseUp = (event) => {
-    const coordinates = getMouseCoordinates(event)
+  const onPointerUp = (event) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
 
+    const coordinates = getMouseCoordinates(event)
     handleMouseUp(coordinates);
+
+    if (prevToolRef.current) {
+      handleChangeTool(prevToolRef.current);
+
+      prevToolRef.current = null;
+      simulateKeyDown.current = false;
+    }
   }
 
   const onDoubleClick = (event) => {
@@ -150,9 +241,10 @@ const DrawDesk = ({
       id="canvas"
       ref={canvasRef}
       style={{ cursor: cursorType }}
-      onMouseDown={onMouseDown}
-      onMouseMove={onMouseMove}
-      onMouseUp={onMouseUp}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
       onDoubleClick={onDoubleClick}
     />
   );

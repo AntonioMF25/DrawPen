@@ -1,5 +1,89 @@
 # Change Log
 
+## [0.0.43] - 2026-02-20
+### Features:
+- Added Clear Desk tool to the toolbar.
+- Added Flat Arrow.
+- Added toolbar hotkeys.
+- Added dot handle UX with hover glow.
+
+### Bug Fixes:
+- Fixed resize jump offset for dot handles.
+
+### Improvements:
+- Improved toolbar interactions and styling.
+- Refined old arrow geometry (scaling and smooth rendering).
+
+## [0.0.41] - 2026-02-13
+- Added `drawpen-x11` package for Linux users with Wayland
+- Removed Opt-in workaround FORCE_X11 infavor of using `drawpen-x11` package for Linux users with Wayland
+
+## [0.0.40] - 2026-02-12
+- Update Electron to 40.4.0
+- Update Icons for Linux (512px)
+- Added Opt-in workaround: when FORCE_X11 is set, force X11 backend
+
+## [0.0.40] - 2026-02-05
+### Features:
+- Added Auto-fade system (Fade/Persist mode).
+- Added settings to control the delay before fading starts.
+- Added settings to adjust the fade-out duration.
+- Fade pause: press SPACE to temporarily pause the fade timer and keep annotations visible longer.
+- Improved Rainbow Highlighter: the Highlighter tool now supports a full rainbow gradient.
+
+### Bug Fixes:
+- Fixed rendering of erased segments when using the Rainbow Highlighter.
+
+### Improvements:
+- Moved the App Icon Color selector to the Application section in Settings.
+- Laser Duration now displays values in seconds in Settings for better clarity.
+
+## [0.0.39] - 2026-01-29
+### Features:
+- Updated Settings panel
+- New option: Start hidden on launch
+- New option: Set laser duration
+
+## [0.0.38] - 2026-01-25
+### Features:
+- Enable Eraser on Stylus eraser press or Mouse wheel
+- Added new Hot Key - 'e' for Eraser
+- Add processing of "Shift + NUM" for Shape/Color/Width change
+
+### Bug Fixes:
+- Improved arrow detection
+
+## [0.0.37] - 2026-01-14
+### Bug Fixes:
+- Fix bug with Canvas initial dimensions
+
+## [0.0.36] - 2026-01-02
+### Features:
+- Settings to Lock drawing monitor
+- Changed Mouse Events to Pointer Events (Touch stylus support)
+- Activate app via left click on Win/Linux
+
+## [0.0.35] - 2025-12-25
+### Features:
+- Added Capture Screen tool (Beta)
+- Enable smoothing for Pen tool (based on pen width)
+
+### Bug Fixes:
+- Disable touch gestures on canvas to fix stylus drag
+
+## [0.0.34] - 2025-12-14
+### Features:
+- Added color switching via X key
+- Added option to disable Cute Cursor
+
+### Bug Fixes:
+- Fixed settings switching without requiring a reload
+
+## [0.0.33] - 2025-12-05
+- Added White color
+- Added Thin thickness
+- Disabled smoothing for Pen tool
+
 ## [0.0.32] - 2025-11-19
 - Ability to pick Icon color (For Windows Tray)
 - Show/Hide Drawing Border

@@ -3,12 +3,14 @@ import {
   segmentsIntersect,
   applySoftSnap,
   applyAspectRatioLock,
+  calcPointsArrow,
+  calcSegmentsFlatArrow,
 } from './general.js';
 
-import { dotMargin, figureMinScale } from '../constants.js'
+import { dotTextMargin, figureMinScale, widthList, dotHoverRadius } from '../constants.js'
 
 const withinRadius = (x, y) => {
-  const radius = 10
+  const radius = dotHoverRadius
 
   return (point) => {
     const [pointX, pointY] = point;
@@ -17,16 +19,14 @@ const withinRadius = (x, y) => {
   }
 }
 
-const isOnCurve = (x, y, points) => {
-  const threshold = 10
-
+const isOnCurve = (x, y, points, tolerance) => {
   for (let i = 0; i < points.length - 1; i++) {
     const pointA = points[i];
     const pointB = points[i + 1];
 
     const distance = pointToSegmentDistance(x, y, pointA, pointB);
 
-    if (distance <= threshold) {
+    if (distance <= tolerance) {
       return true;
     }
   }
@@ -35,16 +35,67 @@ const isOnCurve = (x, y, points) => {
 }
 
 const isOnLine = (x, y, figure) => {
-  const { points } = figure
+  const { points, widthIndex } = figure
 
-  return isOnCurve(x, y, points)
+  const baseTolerance = 5;
+  const tolerance = baseTolerance + widthList[widthIndex].figure_size / 2
+
+  return isOnCurve(x, y, points, tolerance)
+}
+
+const isOnPolygon = (x, y, points) => {
+  let isInside = false
+  const total = points.length
+
+  for (let current = 0; current < total; current++) {
+    const prev = current === 0 ? total - 1 : current - 1
+
+    const currPoint = points[current]
+    const prevPoint = points[prev]
+
+    const cx = currPoint[0]
+    const cy = currPoint[1]
+    const px = prevPoint[0]
+    const py = prevPoint[1]
+
+    const crossesRay = (cy > y) !== (py > y)
+    if (!crossesRay) continue
+
+    const intersectX = ((px - cx) * (y - cy)) / (py - cy) + cx
+
+    if (x < intersectX) {
+      isInside = !isInside
+    }
+  }
+
+  return isInside
 }
 
 const isOnArrow = (x, y, figure) => {
-  const { points } = figure
+  const { points, widthIndex } = figure
 
-  // TODO: Make it smarter!
-  return isOnCurve(x, y, points)
+  const figurePoints = calcPointsArrow(points, widthIndex)
+
+  return isOnPolygon(x, y, figurePoints)
+}
+
+const isOnFlatArrow = (x, y, figure) => {
+  const { points, widthIndex } = figure
+
+  const baseTolerance = 5;
+  const tolerance = baseTolerance + widthList[widthIndex].figure_size / 2
+
+  const [shaftSegment, headTopSegment, headBottomSegment] = calcSegmentsFlatArrow(points, widthIndex)
+
+  const shaftDistance      = pointToSegmentDistance(x, y, shaftSegment[0], shaftSegment[1]);
+  const headTopDistance    = pointToSegmentDistance(x, y, headTopSegment[0], headTopSegment[1]);
+  const headBottomDistance = pointToSegmentDistance(x, y, headBottomSegment[0], headBottomSegment[1]);
+
+  const closeToShaft      = shaftDistance <= tolerance;
+  const closeToHeadTop    = headTopDistance <= tolerance;
+  const closeToHeadBottom = headBottomDistance <= tolerance;
+
+  return (closeToShaft || closeToHeadTop || closeToHeadBottom)
 }
 
 const isOnOval = (x, y, figure) => {
@@ -79,9 +130,11 @@ const isOnOval = (x, y, figure) => {
 }
 
 const isOnRectangle = (x, y, figure) => {
-  const { points } = figure
+  const { points, widthIndex } = figure
 
-  const tolerance = 5;
+  const baseTolerance = 5;
+  const tolerance = baseTolerance + widthList[widthIndex].figure_size / 2
+
   const [startX, startY] = points[0];
   const [endX, endY] = points[1];
 
@@ -103,21 +156,17 @@ const isOnRectangle = (x, y, figure) => {
   const closeToLeftEdge   = distLeft <= tolerance && withinVerticalBounds;
   const closeToRightEdge  = distRight <= tolerance && withinVerticalBounds;
 
-  if (closeToTopEdge || closeToBottomEdge || closeToLeftEdge || closeToRightEdge) { // TODO: Rethink formula!
-    return true;
-  }
-
-  return false
+  return (closeToTopEdge || closeToBottomEdge || closeToLeftEdge || closeToRightEdge)
 }
 
 const isOverText = (x, y, figure) => {
   const { points, width, height, scale } = figure
   const startAt = points[0]
 
-  const minX = startAt[0] - dotMargin;
-  const maxX = startAt[0] + width * scale + dotMargin;
-  const minY = startAt[1] - dotMargin;
-  const maxY = startAt[1] + height * scale + dotMargin;
+  const minX = startAt[0] - dotTextMargin;
+  const maxX = startAt[0] + width * scale + dotTextMargin;
+  const minY = startAt[1] - dotTextMargin;
+  const maxY = startAt[1] + height * scale + dotTextMargin;
 
   const withinHorizontalBounds = x >= minX && x <= maxX;
   const withinVerticalBounds = y >= minY && y <= maxY;
@@ -161,10 +210,10 @@ const isOnTextDots = (x, y, figure) => {
   const { points, width, height, scale } = figure
   const startAt = points[0];
 
-  const startX = startAt[0] - dotMargin
-  const startY = startAt[1] - dotMargin
-  const endX = startAt[0] + width * scale + dotMargin
-  const endY = startAt[1] + height * scale + dotMargin
+  const startX = startAt[0] - dotTextMargin
+  const startY = startAt[1] - dotTextMargin
+  const endX = startAt[0] + width * scale + dotTextMargin
+  const endY = startAt[1] + height * scale + dotTextMargin
 
   const inRadius = withinRadius(x, y)
 
@@ -180,6 +229,8 @@ export const isOnFigure = (x, y, figure) => {
   switch (figure.type) {
     case 'arrow':
       return isOnArrow(x, y, figure)
+    case 'flat_arrow':
+      return isOnFlatArrow(x, y, figure)
     case 'rectangle':
       return isOnRectangle(x, y, figure)
     case 'oval':
@@ -267,16 +318,17 @@ const isSegmentTouchCurve = (segmentPoints, figure) => {
   const { points } = figure
   const [eraseAtX, eraseAtY] = segmentPoints.at(-1);
 
+  const tolerance = 10
+
   if (points.length < 2) {
     const [pointX, pointY] = points[0];
 
-    const threshold = 10
     const distance = Math.hypot(eraseAtX - pointX, eraseAtY - pointY);
 
-    return distance <= threshold
+    return distance <= tolerance
   }
 
-  if (isOnCurve(eraseAtX, eraseAtY, points)) {
+  if (isOnCurve(eraseAtX, eraseAtY, points, tolerance)) {
     return true
   }
 
@@ -292,6 +344,33 @@ const isSegmentTouchLine = (segmentPoints, figure) => {
   }
 
   return isSegmentIntersectCurve(segmentPoints, points)
+}
+
+const isSegmentTouchArrow = (segmentPoints, figure) => {
+  const { points } = figure
+  const [eraseAtX, eraseAtY] = segmentPoints.at(-1);
+
+  if (isOnArrow(eraseAtX, eraseAtY, figure)) {
+    return true
+  }
+
+  const figurePoints = calcPointsArrow(points, figure.widthIndex)
+
+  return isSegmentIntersectCurve(segmentPoints, figurePoints)
+}
+
+const isSegmentTouchFlatArrow = (segmentPoints, figure) => {
+  const [eraseAtX, eraseAtY] = segmentPoints.at(-1);
+
+  if (isOnFlatArrow(eraseAtX, eraseAtY, figure)) {
+    return true
+  }
+
+  const [shaftSegment, headTopSegment, headBottomSegment] = calcSegmentsFlatArrow(figure.points, figure.widthIndex)
+
+  return isSegmentIntersectCurve(segmentPoints, shaftSegment) ||
+         isSegmentIntersectCurve(segmentPoints, headTopSegment) ||
+         isSegmentIntersectCurve(segmentPoints, headBottomSegment)
 }
 
 const isSegmentTouchRectangle = (segmentPoints, figure) => {
@@ -372,9 +451,12 @@ export const areFiguresIntersecting = (eraserFigure, figure) => {
   switch (figure.type) {
     case 'pen':
     case 'highlighter':
+    case 'fadepen':
       return isSegmentTouchCurve(eraserFigure.points, figure)
     case 'arrow':
-      return isSegmentTouchLine(eraserFigure.points, figure)
+      return isSegmentTouchArrow(eraserFigure.points, figure)
+    case 'flat_arrow':
+      return isSegmentTouchFlatArrow(eraserFigure.points, figure)
     case 'rectangle':
       return isSegmentTouchRectangle(eraserFigure.points, figure)
     case 'oval':
@@ -392,6 +474,7 @@ export const getDotNameOnFigure = (x, y, figure) => {
   switch (figure.type) {
     case 'line':
     case 'arrow':
+    case 'flat_arrow':
       return isOnTwoDots(x, y, figure) // ['pointA', 'pointB', null]
     case 'oval':
     case 'rectangle':
@@ -402,6 +485,53 @@ export const getDotNameOnFigure = (x, y, figure) => {
       return false
   }
 };
+
+export const getDotCoordinates = (figure, dotName) => {
+  if (['line', 'arrow', 'flat_arrow'].includes(figure.type)) {
+    if (dotName === 'pointA') return figure.points[0];
+    if (dotName === 'pointB') return figure.points[1];
+  }
+
+  if (['rectangle', 'oval'].includes(figure.type)) {
+    const [pointA, pointB] = figure.points;
+
+    if (dotName === 'pointA') return pointA;
+    if (dotName === 'pointB') return pointB;
+    if (dotName === 'pointC') return [pointA[0], pointB[1]];
+    if (dotName === 'pointD') return [pointB[0], pointA[1]];
+  }
+
+  if (figure.type === 'text') {
+    const startAt = figure.points[0];
+    const startX = startAt[0] - dotTextMargin;
+    const startY = startAt[1] - dotTextMargin;
+    const endX = startAt[0] + figure.width * figure.scale + dotTextMargin;
+    const endY = startAt[1] + figure.height * figure.scale + dotTextMargin;
+
+    if (dotName === 'pointAScale') return [startX, startY];
+    if (dotName === 'pointBScale') return [endX, endY];
+    if (dotName === 'pointCScale') return [startX, endY];
+    if (dotName === 'pointDScale') return [endX, startY];
+  }
+
+  return null;
+}
+
+export const getDotOffsetCoordinates = (figure, dotName, x, y) => {
+  const dotCoordinates = getDotCoordinates(figure, dotName);
+
+  if (!dotCoordinates) {
+    return {
+      offsetX: 0,
+      offsetY: 0,
+    };
+  }
+
+  return {
+    offsetX: x - dotCoordinates[0],
+    offsetY: y - dotCoordinates[1],
+  };
+}
 
 export const dragFigure = (figure, oldCoordinates, newCoordinates) => {
   const offsetX = newCoordinates.x - oldCoordinates.x;
@@ -415,26 +545,31 @@ export const dragFigure = (figure, oldCoordinates, newCoordinates) => {
 
 const anchorPoints = {
   pointAScale: (f) => [
-    f.points[0][0] - dotMargin,
-    f.points[0][1] - dotMargin
+    f.points[0][0] - dotTextMargin,
+    f.points[0][1] - dotTextMargin
   ],
   pointBScale: (f) => [
-    f.points[0][0] + f.width * f.scale + dotMargin,
-    f.points[0][1] + f.height * f.scale + dotMargin
+    f.points[0][0] + f.width * f.scale + dotTextMargin,
+    f.points[0][1] + f.height * f.scale + dotTextMargin
   ],
   pointCScale: (f) => [
-    f.points[0][0] - dotMargin,
-    f.points[0][1] + f.height * f.scale + dotMargin
+    f.points[0][0] - dotTextMargin,
+    f.points[0][1] + f.height * f.scale + dotTextMargin
   ],
   pointDScale: (f) => [
-    f.points[0][0] + f.width * f.scale + dotMargin,
-    f.points[0][1] - dotMargin
+    f.points[0][0] + f.width * f.scale + dotTextMargin,
+    f.points[0][1] - dotTextMargin
   ],
 };
 
-export const resizeFigure = (figure, resizingDotName, { x, y, isShiftPressed }) => {
+export const resizeFigure = (figure, activeFigureInfo, { x, y, isShiftPressed }) => {
+  const { resizingDotName, resizingPointerOffset } = activeFigureInfo;
+
+  x -= resizingPointerOffset.offsetX;
+  y -= resizingPointerOffset.offsetY;
+
   if (isShiftPressed) {
-    if (['line', 'arrow'].includes(figure.type)) {
+    if (['line', 'arrow', 'flat_arrow'].includes(figure.type)) {
       let pointA = figure.points[0];
       let pointB = figure.points[1];
 

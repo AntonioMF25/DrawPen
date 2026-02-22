@@ -1,7 +1,7 @@
 {
   "name": "drawpen",
   "productName": "DrawPen",
-  "version": "0.0.33",
+  "version": "0.0.43",
   "description": "DrawPen is a screen annotation tool built with web technology",
   "appId": "dmytro.vasin.drawpen",
   "author": {
@@ -43,7 +43,7 @@
     "cross-env": "^10.1.0",
     "css-loader": "^7.1.2",
     "dotenv": "^16.4.5",
-    "electron": "38.2.1",
+    "electron": "40.4.0",
     "sass": "^1.77.8",
     "sass-loader": "^14.2.1",
     "style-loader": "^4.0.0",
@@ -55,6 +55,7 @@
     "lazy-brush": "^2.0.1",
     "lodash.throttle": "^4.1.1",
     "perfect-freehand": "^1.2.2",
+    "posthog-node": "^5.21.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-icons": "^5.2.1",

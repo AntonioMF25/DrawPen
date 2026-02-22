@@ -8,10 +8,10 @@
   <a href='https://github.com/DmytroVasin/DrawPen/releases/latest/download/DrawPen.Setup.exe'>
     <img alt='Get it on Windows' width="134px" src='https://github.com/DmytroVasin/DrawPen/blob/main/assets/static/BadgeWindows.png?raw=true'/>
   </a>
-  <a href='https://github.com/DmytroVasin/DrawPen/releases/latest/download/DrawPen-0.0.32-arm64.dmg'>
+  <a href='https://github.com/DmytroVasin/DrawPen/releases/latest/download/DrawPen-0.0.43-arm64.dmg'>
     <img alt='Get it on macOS' width="134px" src='https://github.com/DmytroVasin/DrawPen/blob/main/assets/static/BadgeMacOS.png?raw=true'/>
   </a>
-  <a href='https://github.com/DmytroVasin/DrawPen/releases/latest/download/drawpen_0.0.32_amd64.deb'>
+  <a href='https://github.com/DmytroVasin/DrawPen/releases/latest/download/drawpen_0.0.43_amd64.deb'>
     <img alt='Get it on Linux' width="134px" src='https://github.com/DmytroVasin/DrawPen/blob/main/assets/static/BadgeLinux.png?raw=true'/>
   </a>
 </p>
@@ -36,6 +36,15 @@ brew install --cask drawpen
 scoop bucket add extras
 scoop install extras/drawpen
 ```
+
+### Known issues
+
+On some Linux setups running **Wayland** (e.g. [Fedora KDE Plasma](https://github.com/DmytroVasin/DrawPen/issues/82), [Zorin](https://github.com/DmytroVasin/DrawPen/issues/81)), DrawPen may start with a **segmentation fault**. [Explanation In Details](https://github.com/IsmaelMartinez/teams-for-linux/blob/1c28e146ca78bcb0ec4df317d7f0684984adf205/docs-site/docs/development/research/wayland-x11-ozone-platform-investigation.md)
+
+#### Workaround:
+
+- Run DrawPen with X11 backend: `drawpen --ozone-platform=x11`
+- Use DrawPen `drawpen-x11` package available in [releases](https://github.com/DmytroVasin/DrawPen/releases/latest/)
 
 ### Keybindings
 
