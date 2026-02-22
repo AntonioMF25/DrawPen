@@ -50,6 +50,7 @@ scoop install extras/drawpen
 | Activate Eraser                         | <kbd>6</kbd> | |
 | Switch Color                            | <kbd>7</kbd> | |
 | Switch Thickness (Width)                | <kbd>8</kbd> | |
+| Show/Hide Tool Cursor Icon              | <kbd>0</kbd> | Useful for clean screenshots |
 | Show/Hide ToolBar                       | <kbd>CMD/CTRL + T</kbd> | |
 | Show/Hide Whiteboard                    | <kbd>CMD/CTRL + E</kbd> | |
 | Clear Desk                              | <kbd>CMD/CTRL + K</kbd> | |

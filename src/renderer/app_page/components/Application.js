@@ -105,6 +105,7 @@ const Application = (settings) => {
   const [redoStackFigures, setRedoStackFigures] = useState([]);
   const [clipboardFigure, setClipboardFigure] = useState(null);
   const [isShiftPressed, setIsShiftPressed] = useState(false);
+  const [showCursorIcon, setShowCursorIcon] = useState(true);
 
   useEffect(() => {
     window.electronAPI.onResetScreen(handleReset);
@@ -323,6 +324,9 @@ const Application = (settings) => {
         break;
       case '8':
         handleChangeWidth((activeWidthIndex + 1) % widthList.length);
+        break;
+      case '0':
+        setShowCursorIcon(prevShowCursorIcon => !prevShowCursorIcon);
         break;
     }
 
@@ -1006,13 +1010,17 @@ const Application = (settings) => {
           />
       }
 
-      <CuteCursor
-        mouseCoordinates={mouseCoordinates}
-        activeColorIndex={activeColorIndex}
-        activeWidthIndex={activeWidthIndex}
-        activeTool={activeTool}
-        Icons={Icons}
-      />
+      {
+        showCursorIcon && (
+          <CuteCursor
+            mouseCoordinates={mouseCoordinates}
+            activeColorIndex={activeColorIndex}
+            activeWidthIndex={activeWidthIndex}
+            activeTool={activeTool}
+            Icons={Icons}
+          />
+        )
+      }
 
       <DrawDesk
         allFigures={allFigures}
