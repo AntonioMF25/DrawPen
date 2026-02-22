@@ -123,14 +123,7 @@ const Application = (settings) => {
   const [redoStackFigures, setRedoStackFigures] = useState([]);
   const [clipboardFigure, setClipboardFigure] = useState(null);
   const [isShiftPressed, setIsShiftPressed] = useState(false);
-  const [isSpacePressed, setIsSpacePressed] = useState(false);
-  const [isFadeDrawing, setIsFadeDrawing] = useState(false);
-  const [showDrawingBorder, setShowDrawingBorder] = useState(initialShowDrawingBorder);
-  const [showCuteCursor, setShowCuteCursor] = useState(initialShowCuteCursor);
-  const [mainColorIndex, setMainColorIndex] = useState(initialMainColorIndex);
-  const [secondaryColorIndex, setSecondaryColorIndex] = useState(initialSecondaryColorIndex);
-  const [toastInfo, setToastInfo] = useState(null);
-  const [fadeOpacity, setFadeOpacity] = useState(1.0);
+  const [showCursorIcon, setShowCursorIcon] = useState(true);
 
   useEffect(() => {
     window.electronAPI.onResetScreen(handleReset);
@@ -476,6 +469,10 @@ const Application = (settings) => {
           setToolbarSlide("main-slide");
         }
         break;
+      case '0':
+        setShowCursorIcon(prevShowCursorIcon => !prevShowCursorIcon);
+        break;
+    }
 
       case 'color-slide':
         if (digitIndex < colorList.length) {
@@ -1424,7 +1421,7 @@ const Application = (settings) => {
       }
 
       {
-        showCuteCursor &&
+        showCursorIcon && (
           <CuteCursor
             mouseCoordinates={mouseCoordinates}
             activeColorIndex={activeColorIndex}
@@ -1432,6 +1429,7 @@ const Application = (settings) => {
             activeTool={activeTool}
             Icons={Icons}
           />
+        )
       }
 
       <DrawDesk
